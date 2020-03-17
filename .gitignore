@@ -1,0 +1,15 @@
+dist
+.idea
+bower_components
+node_modules
+.sass-cache
+stats.json
+yarn-error.log
+compilation-stats.json
+survey-user-fe
+npm-debug.log
+yarn.lock
+.DS_Store
+logs
+tmp
+
