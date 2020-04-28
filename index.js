@@ -11,132 +11,78 @@ function isJsFile(asset) {
     return (asset.length - '.js'.length) === asset.lastIndexOf('.js');
 }
 
-function initStats(stats) {
-    const { chunks, entrypoints } = stats;
+function assetsByFileType(assets = []) {
+    const cssList = [];
+    const jsList = [];
 
-    if(!chunks || !entrypoints) {
-        console.error('in stats, chunks and entrypoints required!');
-        return;
-    }
-
-    // init request assets
-    const assetsByRequest = {};
-    const chunksJsExcludeEntry = [];
-    const chunksJsEntry = [];
-    chunks.forEach(item => {
-        if(item.initial && !item.entry) {
-            item.files.forEach(file => {
-                if(isJsFile(file)) {
-                    chunksJsExcludeEntry.push(file);
-                }
-            })
+    assets.forEach(file => {
+        if(isJsFile(file)) {
+            jsList.push(file);
         }
-        if(item.initial && item.entry) {
-            item.files.forEach(file => {
-                if(isJsFile(file)) {
-                    chunksJsEntry.push(file);
-                }
-            })
+        else if(isCssFile(file)) {
+            cssList.push(file);
         }
-        if(!item.initial && !item.entry) {
-            item.files.forEach(file => {
-                if(isJsFile(file)) {
-                    chunksJsExcludeEntry.push(file);
-                }
-            })
-
-            const cssFiles = [];
-            const jsFiles = [];
-
-            item.files.forEach(file => {
-                if(isJsFile(file)) {
-                    jsFiles.push(file);
-                }
-                else if(isCssFile(file)) {
-                    cssFiles.push(file);
-                }
-            })
-
-            item.origins.forEach(origin => {
-                const key = origin.request + origin.moduleId;
-                if(!assetsByRequest[key]) {
-                    assetsByRequest[key] = {
-                        css: [],
-                        js: [],
-                    };
-                }
-                [].push.apply(assetsByRequest[key].css, cssFiles);
-                [].push.apply(assetsByRequest[key].js, jsFiles);
-            })
-        }
-    })
-
-    // init 'initial and entry' assests;
-    const assetsByEntry = {};
-    Object.keys(entrypoints).forEach(entryKey => {
-        const entry = entrypoints[entryKey];
-
-        if(!assetsByEntry[entryKey]) {
-            assetsByEntry[entryKey] = {
-                css: [],
-                js: []
-            }
-        }
-        (entry.assets || []).forEach(asset => {
-            if(!asset) return;
-            // css file
-            if(isCssFile(asset)) {
-                assetsByEntry[entryKey].css.push(asset);
-            }
-            // js file
-            else if(isJsFile(asset)) {
-                assetsByEntry[entryKey].js.push(asset);
-            }
-        })
     })
     return {
-        assetsByEntry,
-        assetsByRequest,
-        chunksJsExcludeEntry,
-        chunksJsEntry,
-        publicPath: stats.publicPath,
+        js: jsList,
+        css: cssList,
     }
 }
 
-function getAssets({ initedStats, requestText, entryPoint = 'main' } = {}) {
-    if(!initedStats || (initedStats && (!initedStats.assetsByEntry || !initedStats.assetsByRequest))) {
-        console.error('initedStats has some exception!:', initedStats);
+function initStats(stats) {
+    const { namedChunkGroups, chunks, publicPath } = stats;
+
+    if(!namedChunkGroups) {
+        console.error('in initStats, namedChunkGroups required!');
         return;
     }
 
-    let requestAssets = null;
-    if(requestText) {
-        Object.keys(initedStats.assetsByRequest).some(key => {
-            if(0 === key.indexOf(requestText)) {
-                requestAssets = initedStats.assetsByRequest[key];
-                return;
-            }
-        })
+    if(!chunks) {
+        console.error('in initStats, chunks required!');
+        return;
     }
-    const entryAssets = initedStats.assetsByEntry[entryPoint];
 
-    if(!entryAssets) {
-        console.warn(`entryPoint ${entryPoint}, assets not found!`);
+    return {
+        chunks,
+        namedChunkGroups,
+        publicPath,
     }
-    if(!requestAssets) {
-        console.warn(`request: ${requestText}, assets not found!`);
+}
+
+/**
+ *  获取指定chunkName 或entryPoint的资源
+ *  @initedStats [object] 必须 被初始化的资源
+ *  @chunkName [string] 可选
+ *  @entryPoint [string] 可选
+ *  @return Object{cssFiles, jsFiles}
+ */
+function getAssets({ initedStats, chunkName, entryPoint } = {}) {
+    if(!initedStats || (initedStats && (!initedStats.namedChunkGroups))) {
+        throw Error('initedStats require namedChunkGroups');
+    }
+
+    const namedChunkGroups = initedStats.namedChunkGroups;
+
+    let entryAssets = null;
+    if(entryPoint && namedChunkGroups[entryPoint]) {
+        entryAssets = assetsByFileType(namedChunkGroups[entryPoint].assets);
+    }
+
+    let chunkAssets = null;
+    if(chunkName && namedChunkGroups[chunkName]) {
+        chunkAssets = assetsByFileType(namedChunkGroups[chunkName].assets);
     }
 
     return {
         // css entry 的放前面
-        cssFiles: [].concat(entryAssets ? entryAssets.css : [],  requestAssets ? requestAssets.css : []),
-        // js entry 放后面，避免entry 去拉request的js
-        jsFiles: [].concat(requestAssets ? requestAssets.js: [], entryAssets ? entryAssets.js: []),
+        cssFiles: [].concat(entryAssets ? entryAssets.css : [],  chunkAssets ? chunkAssets.css : []),
+        // js entry 放后面，entry 会export模块
+        jsFiles: [].concat(chunkAssets ? chunkAssets.js: [], entryAssets ? entryAssets.js: []),
     }
 }
 
-function getAssetsXMLString({initedStats, requestText, entryPoint='main', isPublicPrefix = true} = {}) {
-    const assets = getAssets({ initedStats, requestText, entryPoint });
+function getAssetsXMLString({initedStats, chunkName, entryPoint, isPublicPrefix = true} = {}) {
+    const assets = getAssets({ initedStats, chunkName, entryPoint });
     let publicPath = '';
     if(isPublicPrefix) {
         publicPath = initedStats.publicPath;
@@ -148,62 +94,118 @@ function getAssetsXMLString({initedStats, requestText, entryPoint='main', isPubl
     }
 }
 
-function requireExcludeEntry(initedStats, root) {
-    const chunksJs = initedStats.chunksJsExcludeEntry;
-    console.log('requireExcludeEntry: ', chunksJs);
-
-    if(chunksJs) {
-        chunksJs.forEach(file => {
+/**
+ *  批量加载js模块
+ *  @root [string] 必须 资源所在根目录
+ *  @jsAssets [array] 必须 文件列表
+ */
+function _requireJsSync(root, jsAssets) {
+    let lastModule = null;
+    if(jsAssets) {
+        jsAssets.forEach(file => {
             if(root) {
                 file = path.resolve(root, file);
             }
             if(fs.pathExistsSync(file)){
-                require(file);
-                console.log('success require chunk file:', file);
+                lastModule = require(file);
+                console.log('success require file:', file);
             }
             else {
-                console.error('Not fount chunk file:', file);
+                console.error('Not fount file:', file);
             }
         })
     }
+    return lastModule;
 }
 
-function requireEntry(initedStats, root) {
-    const chunksJs = initedStats.chunksJsEntry;
-    console.log('requireEntry: ', chunksJs);
+/**
+ *  加载指定入口js
+ *  @initedStats [object] 必须 被初始化的资源
+ *  @root [string] 必须 资源所在根目录
+ *  @entryPoint [string] option 默认 main
+ */
+function requireEntryJs(initedStats, root, entryPoint = 'main') {
+    const assets = getAssets({initedStats, entryPoint});
+    return _requireJsSync(root, assets.jsFiles);
+}
 
-    if(chunksJs.length > 1) {
-        throw Error('no support mutil entry!');
+/**
+ *  获取指定entry下所有child chunk的js
+ *  @initedStats [object] 必须 被初始化的资源
+ *  @entryPoint [string] option 默认 main
+ */
+function getAllChildChunkJsForEntry(initedStats, entryPoint = 'main') {
+    if(!initedStats || (initedStats && (!initedStats.chunks || !initedStats.namedChunkGroups))) {
+        throw Error('initedStats required chunks, namedChunkGroups child');
     }
-    if(chunksJs.length === 1) {
-        let file = chunksJs[0]
-        if(root) {
-            file = path.resolve(root, file);
-        }
-        if(fs.pathExistsSync(file)){
-            console.log('success require entry chunk file:', file);
-            return require(file);
-        }
-        else {
-            console.error('Not fount entry chunk file:', file);
-        }
+
+    const namedChunkGroups = initedStats.namedChunkGroups;
+    const chunks = initedStats.chunks;
+
+    const entry = namedChunkGroups[entryPoint];
+    if(!entry) {
+        throw Error('not found entry from initedStats')
     }
-    else {
-        throw Error('entry chunk lose!');
+
+    // find childChunkIds from entry
+    let childrenChunkIds = null;
+    const entryChunkIds = entry.chunks;
+    entryChunkIds.some(chunkId => {
+        const entryChunk = chunks[chunkId];
+        if(entryChunk && entryChunk.entry === true) {
+            childrenChunkIds = entryChunk.children;
+            return true;
+        }
+    })
+
+    let jsFiles = []
+    let walkChunkNameList = [];
+    if(childrenChunkIds) {
+        childrenChunkIds.forEach(chunkId => {
+            const childChunk = chunks[chunkId];
+            if(childChunk && childChunk.files && childChunk.names) {
+                childChunk.files.forEach(file => {
+                    if(isJsFile(file)) {
+                        jsFiles.push(file);
+                    }
+                })
+
+                childChunk.names.forEach(name => {
+                    walkChunkNameList.push(name);
+                })
+            }
+        })
+    }
+
+    return {
+        jsFiles,
+        walkChunkNameList
     }
 }
 
-function requireAll(initedStats, root) {
-    requireExcludeEntry(initedStats, root);
-    return requireEntry(initedStats, root);
+/**
+ *  加载指定entry下所有child chunk的js
+ *  @initedStats [object] 必须 被初始化的资源
+ *  @root [string] 必须 资源所在根目录
+ *  @entryPoint [string] option 默认 main
+ */
+function requireAllChildChunkJsForEntry(initedStats, root, entryPoint = 'main') {
+    const assets = getAllChildChunkJsForEntry(initedStats, entryPoint);
+    _requireJsSync(root, assets.jsFiles)
+    console.log('require all chunkName:', assets.walkChunkNameList.join(','));
 }
 
-// require data {
-//      matchResult,
-//      jsTpl,
-//      cssTpl,
-//      pageContent
-// }
+/**
+ *  加载指定入口js和入口下所有chunk的js
+ *  @initedStats [object] 必须 被初始化的资源
+ *  @root [string] 必须 资源所在根目录
+ *  @entryPoint [string] option 默认 main
+ */
+function requireAll(initedStats, root, entryPoint = 'main') {
+    requireAllChildChunkJsForEntry(initedStats, root);
+    return requireEntryJs(initedStats, root);
+}
+
 function makeHtmlTpl(htmlPath) {
     if(typeof htmlPath !== 'string') {
         throw Error('htmlPath required!');
@@ -227,7 +229,7 @@ function getIndexHtmlByTpl({ htmlTpl, data = {} }) {
 }
 
 function getIndexHtml({ htmlTpl, matchResult, pageContent, initedStats } = {}) {
-    const assets = getAssetsXMLString({ initedStats, requestText: matchResult.requestText });
+    const assets = getAssetsXMLString({ initedStats, chunkName: matchResult.chunkName, entryPoint: 'main' });
 
     if(!htmlTpl) {
         return `
@@ -258,5 +260,7 @@ module.exports = {
     initStats,
     makeHtmlTpl,
     getIndexHtml,
+    getAssets,
+    getAssetsXMLString,
     requireAll,
 }
